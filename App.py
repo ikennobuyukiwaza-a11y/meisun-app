@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("🏛️ 名選：S&P 500 銘柄 統合スクリーニング＆分析")
-st.markdown("ランキング・スクリーニング機能と、EPSを含む詳細な個別銘柄アナライザーを備えた安定版です。")
+st.markdown("ランキング・スクリーニング機能と、アナリスト予想・EPSを含む詳細な個別銘柄アナライザーを備えた安定版です。")
 
 # S&P 500の全ティッカーをWikipediaから自動取得する関数
 @st.cache_data(ttl=86400)
@@ -216,7 +216,7 @@ if app_mode == "📊 総合ランキング ＆ スクリーニング":
 
 else:
     # 個別銘柄 詳細アナライザーモード
-    st.subheader("🔎 個別銘柄 詳細アナライザー（チャート・出来高・業績・EPS）")
+    st.subheader("🔎 個別銘柄 詳細アナライザー（チャート・業績・アナリスト予想）")
     st.markdown("任意のティッカーシンボル（例: `AAPL`, `MSFT`, `GOOGL`, `NVDA`, `TSLA` 等）を入力または選択してください。")
     
     col_input1, col_input2 = st.columns([2, 3])
@@ -228,7 +228,7 @@ else:
     target_symbol = input_ticker if input_ticker else select_ticker
     
     if target_symbol:
-        with st.spinner(f"【{target_symbol}】の詳細データを取得・解析中..."):
+        with st.spinner(f"【{target_symbol}】の詳細データ・予想情報を取得中..."):
             try:
                 stock_obj = yf.Ticker(target_symbol)
                 info = stock_obj.info
@@ -236,7 +236,7 @@ else:
                 
                 st.markdown(f"### 📌 銘柄情報: **{company_name} ({target_symbol})**")
                 
-                # 基本指標の表示（EPSを追加）
+                # 基本指標の表示
                 c1, c2, c3, c4, c5 = st.columns(5)
                 c1.metric("現在株価", f"${info.get('currentPrice', info.get('regularMarketPrice', 0)):,.2f}")
                 c2.metric("時価総額", f"${info.get('marketCap', 0):,.0f}")
@@ -246,6 +246,32 @@ else:
                 trailing_eps = info.get('trailingEps', None)
                 c5.metric("EPS (TTM)", f"${trailing_eps:,.2f}" if trailing_eps is not None else "N/A")
                 
+                st.markdown("---")
+                
+                # アナリストの業績予想（EPS・売上高コンセンサス）セクション
+                st.markdown("#### 🎯 アナリスト業績予想コンセンサス（EPS / 売上高）")
+                st.markdown("市場のアナリストによる今後の予測平均値とバラツキ（最高・最低）を表示します。")
+                
+                try:
+                    earnings_est = stock_obj.earnings_estimate
+                    if earnings_est is not None and not earnings_est.empty:
+                        st.markdown("**【EPS 予想 (Earnings Estimate)】**")
+                        st.dataframe(earnings_est, use_container_width=True)
+                    else:
+                        st.info("EPS予想データが取得できませんでした。")
+                except Exception:
+                    st.info("EPS予想データを取得できませんでした。")
+
+                try:
+                    revenue_est = stock_obj.revenue_estimate
+                    if revenue_est is not None and not revenue_est.empty:
+                        st.markdown("**【売上高 予想 (Revenue Estimate)】**")
+                        st.dataframe(revenue_est.style.format("{:,.0f}" if "avg" in revenue_est.columns or "growth" in revenue_est.columns else "{}"), use_container_width=True)
+                    else:
+                        st.info("売上高予想データが取得できませんでした。")
+                except Exception:
+                    st.info("売上高予想データを取得できませんでした。")
+
                 st.markdown("---")
                 
                 # チャート ＆ 出来高
@@ -261,7 +287,7 @@ else:
                 st.markdown("---")
                 
                 # 四半期ごとの損益計算書データ（EPSを含む）
-                st.markdown("#### 📊 四半期ごとの業績 ＆ EPS推移（直近5期分）")
+                st.markdown("#### 📊 四半期ごとの実績業績 ＆ EPS推移（直近5期分）")
                 q_fin = stock_obj.get_income_stmt(freq="quarterly")
                 if q_fin is not None and not q_fin.empty:
                     st.dataframe(q_fin.style.format("{:,.2f}"), use_container_width=True)
@@ -271,7 +297,7 @@ else:
                 st.markdown("---")
                 
                 # 年別の損益計算書データ（EPSを含む）
-                st.markdown("#### 📅 年別の業績 ＆ EPS推移（過去5年分）")
+                st.markdown("#### 📅 年別の実績業績 ＆ EPS推移（過去5年分）")
                 y_fin = stock_obj.get_income_stmt(freq="yearly")
                 if y_fin is not None and not y_fin.empty:
                     st.dataframe(y_fin.style.format("{:,.2f}"), use_container_width=True)
