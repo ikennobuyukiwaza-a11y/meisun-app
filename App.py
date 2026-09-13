@@ -216,7 +216,7 @@ if app_mode == "📊 総合ランキング ＆ スクリーニング":
 
 else:
     # 個別銘柄 詳細アナライザーモード
-    st.subheader("🔎 個別銘柄 詳細アナライザー（チャート・業績・アナリスト予想）")
+    st.subheader("🔎 個別銘柄 詳細アナライザー（チャート・業績予想・実績）")
     st.markdown("任意のティッカーシンボル（例: `AAPL`, `MSFT`, `GOOGL`, `NVDA`, `TSLA` 等）を入力または選択してください。")
     
     col_input1, col_input2 = st.columns([2, 3])
@@ -228,7 +228,7 @@ else:
     target_symbol = input_ticker if input_ticker else select_ticker
     
     if target_symbol:
-        with st.spinner(f"【{target_symbol}】の詳細データ・予想情報を取得中..."):
+        with st.spinner(f"【{target_symbol}】の詳細データ・アナリスト予想を取得中..."):
             try:
                 stock_obj = yf.Ticker(target_symbol)
                 info = stock_obj.info
@@ -248,9 +248,21 @@ else:
                 
                 st.markdown("---")
                 
-                # アナリストの業績予想（EPS・売上高コンセンサス）セクション
+                # 1. チャート ＆ 出来高
+                st.markdown("#### 📈 株価チャート ＆ 出来高（過去1年間）")
+                hist_data = stock_obj.history(period="1y")
+                if not hist_data.empty:
+                    st.line_chart(hist_data['Close'])
+                    st.markdown("**【出来高 (Volume)】**")
+                    st.bar_chart(hist_data['Volume'])
+                else:
+                    st.warning("株価履歴データが見つかりませんでした。")
+                
+                st.markdown("---")
+                
+                # 2. アナリストの業績予想（EPS・売上高）※場所をチャートと四半期実績の間に配置
                 st.markdown("#### 🎯 アナリスト業績予想コンセンサス（EPS / 売上高）")
-                st.markdown("市場のアナリストによる今後の予測平均値とバラツキ（最高・最低）を表示します。")
+                st.markdown("`0q`は今期(直近)、`+1q`は1四半期先、`0y`は今年度、`+1y`は来年度の予想です（growthは前年同期/前期比の成長率）。")
                 
                 try:
                     earnings_est = stock_obj.earnings_estimate
@@ -266,7 +278,7 @@ else:
                     revenue_est = stock_obj.revenue_estimate
                     if revenue_est is not None and not revenue_est.empty:
                         st.markdown("**【売上高 予想 (Revenue Estimate)】**")
-                        st.dataframe(revenue_est.style.format("{:,.0f}" if "avg" in revenue_est.columns or "growth" in revenue_est.columns else "{}"), use_container_width=True)
+                        st.dataframe(revenue_est, use_container_width=True)
                     else:
                         st.info("売上高予想データが取得できませんでした。")
                 except Exception:
@@ -274,19 +286,7 @@ else:
 
                 st.markdown("---")
                 
-                # チャート ＆ 出来高
-                st.markdown("#### 📈 株価チャート ＆ 出来高（過去1年間）")
-                hist_data = stock_obj.history(period="1y")
-                if not hist_data.empty:
-                    st.line_chart(hist_data['Close'])
-                    st.markdown("**【出来高 (Volume)】**")
-                    st.bar_chart(hist_data['Volume'])
-                else:
-                    st.warning("株価履歴データが見つかりませんでした。")
-                
-                st.markdown("---")
-                
-                # 四半期ごとの損益計算書データ（EPSを含む）
+                # 3. 四半期ごとの損益計算書データ（EPSを含む実績）
                 st.markdown("#### 📊 四半期ごとの実績業績 ＆ EPS推移（直近5期分）")
                 q_fin = stock_obj.get_income_stmt(freq="quarterly")
                 if q_fin is not None and not q_fin.empty:
@@ -296,7 +296,7 @@ else:
                 
                 st.markdown("---")
                 
-                # 年別の損益計算書データ（EPSを含む）
+                # 4. 年別の損益計算書データ（EPSを含む実績）
                 st.markdown("#### 📅 年別の実績業績 ＆ EPS推移（過去5年分）")
                 y_fin = stock_obj.get_income_stmt(freq="yearly")
                 if y_fin is not None and not y_fin.empty:
