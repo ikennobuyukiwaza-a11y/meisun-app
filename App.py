@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("🏛️ 名選：S&P 500 銘柄 統合スクリーニング＆分析")
-st.markdown("動作の安定性を最優先したシンプル高速化版です。")
+st.markdown("ランキング・スクリーニング機能と、安全な個別銘柄の詳細分析機能を備えた安定版です。")
 
 # S&P 500の全ティッカーをWikipediaから自動取得する関数
 @st.cache_data(ttl=86400)
@@ -30,9 +30,18 @@ def get_sp500_tickers():
 
 ALL_SP500_TICKERS = get_sp500_tickers()
 
-st.sidebar.header("🎯 検索対象の切替")
+st.sidebar.header("🎯 表示モードの切替")
+app_mode = st.sidebar.radio(
+    "機能選択",
+    ["📊 総合ランキング ＆ スクリーニング", "🔎 個別銘柄 詳細アナライザー"],
+    index=0,
+    key="app_mode_radio"
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("🎯 検索対象の切替（ランキング用）")
 fetch_mode = st.sidebar.radio(
-    "モード選択",
+    "対象選択",
     ["S&P 500 全銘柄（約500社）", "軽量モード（主要30銘柄のみ高速テスト）"],
     index=0,
     key="fetch_mode_radio"
@@ -108,98 +117,163 @@ def fetch_stock_data_parallel(tickers_tuple):
                 data.append(res)
     return pd.DataFrame(data)
 
-with st.spinner(f"対象銘柄（{len(target_tickers)}社）のデータを高速並列解析中..."):
-    df = fetch_stock_data_parallel(tuple(target_tickers))
+# モードの分岐
+if app_mode == "📊 総合ランキング ＆ スクリーニング":
+    with st.spinner(f"対象銘柄（{len(target_tickers)}社）のデータを高速並列解析中..."):
+        df = fetch_stock_data_parallel(tuple(target_tickers))
 
-if df.empty:
-    st.error("データを取得できませんでした。「軽量モード」に切り替えてお試しください。")
+    if df.empty:
+        st.error("データを取得できませんでした。「軽量モード」に切り替えてお試しください。")
+    else:
+        tab1, tab2 = st.tabs([
+            "📊 総合ランキング", 
+            "🔍 複合スクリーニング"
+        ])
+        
+        with tab1:
+            st.subheader("指標別ランキング一覧")
+            sort_metric = st.selectbox(
+                "並び替えの基準を選択",
+                ["暴落率(最高値比) (%)", "暴騰率(最安値比) (%)", "1ヶ月騰落率 (%)", "売上上昇率 (%)", "利益率 (%)", "時価総額 ($)", "予想PER", "ROE (%)"],
+                key="sort1"
+            )
+            
+            ascending = True if sort_metric in ["予想PER", "PBR", "暴落率(最高値比) (%)"] else False
+            df_sorted = df.sort_values(by=sort_metric, ascending=ascending)
+            
+            st.dataframe(
+                df_sorted.style.format({
+                    "現在株価 ($)": "${:,.2f}",
+                    "過去1年最高値 ($)": "${:,.2f}",
+                    "過去1年最安値 ($)": "${:,.2f}",
+                    "暴落率(最高値比) (%)": "{:+.2f}%",
+                    "暴騰率(最安値比) (%)": "{:+.2f}%",
+                    "時価総額 ($)": "${:,.0f}",
+                    "売上高 ($)": "${:,.0f}",
+                    "純利益 ($)": "${:,.0f}",
+                    "売上上昇率 (%)": "{:+.2f}%",
+                    "利益率 (%)": "{:.2f}%",
+                    "PER": "{:.2f}",
+                    "予想PER": "{:.2f}",
+                    "PBR": "{:.2f}",
+                    "ROE (%)": "{:.2f}%",
+                    "配当利回り (%)": "{:.2f}%",
+                    "1ヶ月騰落率 (%)": "{:+.2f}%"
+                }),
+                use_container_width=True
+            )
+
+        with tab2:
+            st.subheader("複合条件による銘柄スクリーニング")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                use_rev = st.checkbox("売上上昇率の条件を有効にする", value=True, key="c_rev")
+                min_rev_growth = st.slider("売上上昇率の下限（前年比 %以上）", -50.0, 100.0, 0.0, 1.0, key="s_rev")
+                
+                use_margin = st.checkbox("利益率の条件を有効にする", value=True, key="c_margin")
+                min_profit_margin = st.slider("利益率の下限（%以上）", -20.0, 80.0, 5.0, 1.0, key="s_margin")
+                
+                use_pe = st.checkbox("予想PERの条件を有効にする", value=True, key="c_pe")
+                max_forward_pe = st.slider("予想PERの上限（倍以下）", 5.0, 300.0, 50.0, 5.0, key="s_pe")
+                
+                use_pbr = st.checkbox("PBRの条件を有効にする", value=True, key="c_pbr")
+                max_pbr = st.slider("PBRの上限（倍以下）", 0.5, 100.0, 20.0, 1.0, key="s_pbr")
+
+            with col2:
+                use_roe = st.checkbox("ROEの条件を有効にする", value=True, key="c_roe")
+                min_roe = st.slider("ROEの下限（%以上）", -10.0, 100.0, 10.0, 1.0, key="s_roe")
+                
+                use_drop = st.checkbox("暴落率の条件を有効にする", value=False, key="c_drop")
+                max_drop = st.slider("暴落率の上限（最高値比 %以下）", -90.0, 0.0, -20.0, 5.0, key="s_drop")
+                
+                use_surge = st.checkbox("暴騰率の条件を有効にする", value=False, key="c_surge")
+                min_surge = st.slider("暴騰率の下限（最安値比 %以上）", 0.0, 300.0, 50.0, 10.0, key="s_surge")
+
+            cond = pd.Series([True] * len(df), index=df.index)
+            if use_rev:
+                cond &= (df["売上上昇率 (%)"].fillna(-999) >= min_rev_growth)
+            if use_margin:
+                cond &= (df["利益率 (%)"].fillna(-999) >= min_profit_margin)
+            if use_pe:
+                cond &= (df["予想PER"].fillna(999) <= max_forward_pe)
+            if use_pbr:
+                cond &= (df["PBR"].fillna(999) <= max_pbr)
+            if use_roe:
+                cond &= (df["ROE (%)"].fillna(0) >= min_roe)
+            if use_drop:
+                cond &= (df["暴落率(最高値比) (%)"] <= max_drop)
+            if use_surge:
+                cond &= (df["暴騰率(最安値比) (%)"] >= min_surge)
+
+            filtered_df = df[cond]
+            st.write(f"条件に一致した銘柄: **{len(filtered_df)}件** / 対象全{len(df)}銘柄中")
+            
+            if not filtered_df.empty:
+                st.dataframe(filtered_df, use_container_width=True)
+            else:
+                st.info("条件に一致する銘柄が見つかりませんでした。")
+
 else:
-    # 2つのタブに削減して干渉を完全排除
-    tab1, tab2 = st.tabs([
-        "📊 総合ランキング", 
-        "🔍 複合スクリーニング"
-    ])
+    # 個別銘柄 詳細アナライザーモード
+    st.subheader("🔎 個別銘柄 詳細アナライザー（チャート・出来高・業績データ）")
+    st.markdown("任意のティッカーシンボル（例: `AAPL`, `MSFT`, `GOOGL`, `NVDA`, `TSLA` 等）を入力または選択してください。")
     
-    with tab1:
-        st.subheader("指標別ランキング一覧")
-        sort_metric = st.selectbox(
-            "並び替えの基準を選択",
-            ["暴落率(最高値比) (%)", "暴騰率(最安値比) (%)", "1ヶ月騰落率 (%)", "売上上昇率 (%)", "利益率 (%)", "時価総額 ($)", "予想PER", "ROE (%)"],
-            key="sort1"
-        )
-        
-        ascending = True if sort_metric in ["予想PER", "PBR", "暴落率(最高値比) (%)"] else False
-        df_sorted = df.sort_values(by=sort_metric, ascending=ascending)
-        
-        st.dataframe(
-            df_sorted.style.format({
-                "現在株価 ($)": "${:,.2f}",
-                "過去1年最高値 ($)": "${:,.2f}",
-                "過去1年最安値 ($)": "${:,.2f}",
-                "暴落率(最高値比) (%)": "{:+.2f}%",
-                "暴騰率(最安値比) (%)": "{:+.2f}%",
-                "時価総額 ($)": "${:,.0f}",
-                "売上高 ($)": "${:,.0f}",
-                "純利益 ($)": "${:,.0f}",
-                "売上上昇率 (%)": "{:+.2f}%",
-                "利益率 (%)": "{:.2f}%",
-                "PER": "{:.2f}",
-                "予想PER": "{:.2f}",
-                "PBR": "{:.2f}",
-                "ROE (%)": "{:.2f}%",
-                "配当利回り (%)": "{:.2f}%",
-                "1ヶ月騰落率 (%)": "{:+.2f}%"
-            }),
-            use_container_width=True
-        )
-
-    with tab2:
-        st.subheader("複合条件による銘柄スクリーニング")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            use_rev = st.checkbox("売上上昇率の条件を有効にする", value=True, key="c_rev")
-            min_rev_growth = st.slider("売上上昇率の下限（前年比 %以上）", -50.0, 100.0, 0.0, 1.0, key="s_rev")
-            
-            use_margin = st.checkbox("利益率の条件を有効にする", value=True, key="c_margin")
-            min_profit_margin = st.slider("利益率の下限（%以上）", -20.0, 80.0, 5.0, 1.0, key="s_margin")
-            
-            use_pe = st.checkbox("予想PERの条件を有効にする", value=True, key="c_pe")
-            max_forward_pe = st.slider("予想PERの上限（倍以下）", 5.0, 300.0, 50.0, 5.0, key="s_pe")
-            
-            use_pbr = st.checkbox("PBRの条件を有効にする", value=True, key="c_pbr")
-            max_pbr = st.slider("PBRの上限（倍以下）", 0.5, 100.0, 20.0, 1.0, key="s_pbr")
-
-        with col2:
-            use_roe = st.checkbox("ROEの条件を有効にする", value=True, key="c_roe")
-            min_roe = st.slider("ROEの下限（%以上）", -10.0, 100.0, 10.0, 1.0, key="s_roe")
-            
-            use_drop = st.checkbox("暴落率の条件を有効にする", value=False, key="c_drop")
-            max_drop = st.slider("暴落率の上限（最高値比 %以下）", -90.0, 0.0, -20.0, 5.0, key="s_drop")
-            
-            use_surge = st.checkbox("暴騰率の条件を有効にする", value=False, key="c_surge")
-            min_surge = st.slider("暴騰率の下限（最安値比 %以上）", 0.0, 300.0, 50.0, 10.0, key="s_surge")
-
-        cond = pd.Series([True] * len(df), index=df.index)
-        if use_rev:
-            cond &= (df["売上上昇率 (%)"].fillna(-999) >= min_rev_growth)
-        if use_margin:
-            cond &= (df["利益率 (%)"].fillna(-999) >= min_profit_margin)
-        if use_pe:
-            cond &= (df["予想PER"].fillna(999) <= max_forward_pe)
-        if use_pbr:
-            cond &= (df["PBR"].fillna(999) <= max_pbr)
-        if use_roe:
-            cond &= (df["ROE (%)"].fillna(0) >= min_roe)
-        if use_drop:
-            cond &= (df["暴落率(最高値比) (%)"] <= max_drop)
-        if use_surge:
-            cond &= (df["暴騰率(最安値比) (%)"] >= min_surge)
-
-        filtered_df = df[cond]
-        st.write(f"条件に一致した銘柄: **{len(filtered_df)}件** / 対象全{len(df)}銘柄中")
-        
-        if not filtered_df.empty:
-            st.dataframe(filtered_df, use_container_width=True)
-        else:
-            st.info("条件に一致する銘柄が見つかりませんでした。")
+    col_input1, col_input2 = st.columns([2, 3])
+    with col_input1:
+        input_ticker = st.text_input("ティッカーシンボルを入力", value="AAPL").upper().strip()
+    with col_input2:
+        select_ticker = st.selectbox("または代表的な銘柄から選択", ALL_SP500_TICKERS[:30], key="select_ticker_quick")
+    
+    target_symbol = input_ticker if input_ticker else select_ticker
+    
+    if target_symbol:
+        with st.spinner(f"【{target_symbol}】のデータを取得・解析中..."):
+            try:
+                stock_obj = yf.Ticker(target_symbol)
+                info = stock_obj.info
+                company_name = info.get("shortName", target_symbol)
+                
+                st.markdown(f"### 📌 銘柄情報: **{company_name} ({target_symbol})**")
+                
+                # 基本指標の表示
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("現在株価", f"${info.get('currentPrice', info.get('regularMarketPrice', 0)):,.2f}")
+                c2.metric("時価総額", f"${info.get('marketCap', 0):,.0f}")
+                c3.metric("予想PER", f"{info.get('forwardPE', 'N/A')}")
+                c4.metric("配当利回り", f"{(info.get('dividendYield', 0) * 100):.2f}%" if info.get('dividendYield') else "0.00%")
+                
+                st.markdown("---")
+                
+                # チャート ＆ 出来高
+                st.markdown("#### 📈 株価チャート ＆ 出来高（過去1年間）")
+                hist_data = stock_obj.history(period="1y")
+                if not hist_data.empty:
+                    st.line_chart(hist_data['Close'])
+                    st.markdown("**【出来高 (Volume)】**")
+                    st.bar_chart(hist_data['Volume'])
+                else:
+                    st.warning("株価履歴データが見つかりませんでした。")
+                
+                st.markdown("---")
+                
+                # 四半期ごとの業績データ（2〜3年分）
+                st.markdown("#### 📊 四半期ごとの業績推移（直近2〜3年）")
+                q_fin = stock_obj.quarterly_financials
+                if q_fin is not None and not q_fin.empty:
+                    st.dataframe(q_fin.style.format("{:,.0f}"), use_container_width=True)
+                else:
+                    st.info("四半期業績データが見つかりませんでした。")
+                
+                st.markdown("---")
+                
+                # 年別の業績データ（5年分）
+                st.markdown("#### 📅 年別の業績推移（過去5年分）")
+                y_fin = stock_obj.financials
+                if y_fin is not None and not y_fin.empty:
+                    st.dataframe(y_fin.style.format("{:,.0f}"), use_container_width=True)
+                else:
+                    st.info("年別業績データが見つかりませんでした。")
+                    
+            except Exception as e:
+                st.error(f"データの取得中にエラーが発生しました。正しいティッカーかご確認ください。（エラー詳細: {e}）")
