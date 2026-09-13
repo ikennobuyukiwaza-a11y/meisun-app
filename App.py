@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("🏛️ 名選：S&P 500 銘柄 統合スクリーニング＆分析")
-st.markdown("ランキング・スクリーニング機能と、安全な個別銘柄の詳細分析機能を備えた安定版です。")
+st.markdown("ランキング・スクリーニング機能と、EPSを含む詳細な個別銘柄アナライザーを備えた安定版です。")
 
 # S&P 500の全ティッカーをWikipediaから自動取得する関数
 @st.cache_data(ttl=86400)
@@ -216,7 +216,7 @@ if app_mode == "📊 総合ランキング ＆ スクリーニング":
 
 else:
     # 個別銘柄 詳細アナライザーモード
-    st.subheader("🔎 個別銘柄 詳細アナライザー（チャート・出来高・業績データ）")
+    st.subheader("🔎 個別銘柄 詳細アナライザー（チャート・出来高・業績・EPS）")
     st.markdown("任意のティッカーシンボル（例: `AAPL`, `MSFT`, `GOOGL`, `NVDA`, `TSLA` 等）を入力または選択してください。")
     
     col_input1, col_input2 = st.columns([2, 3])
@@ -228,7 +228,7 @@ else:
     target_symbol = input_ticker if input_ticker else select_ticker
     
     if target_symbol:
-        with st.spinner(f"【{target_symbol}】のデータを取得・解析中..."):
+        with st.spinner(f"【{target_symbol}】の詳細データを取得・解析中..."):
             try:
                 stock_obj = yf.Ticker(target_symbol)
                 info = stock_obj.info
@@ -236,12 +236,15 @@ else:
                 
                 st.markdown(f"### 📌 銘柄情報: **{company_name} ({target_symbol})**")
                 
-                # 基本指標の表示
-                c1, c2, c3, c4 = st.columns(4)
+                # 基本指標の表示（EPSを追加）
+                c1, c2, c3, c4, c5 = st.columns(5)
                 c1.metric("現在株価", f"${info.get('currentPrice', info.get('regularMarketPrice', 0)):,.2f}")
                 c2.metric("時価総額", f"${info.get('marketCap', 0):,.0f}")
-                c3.metric("予想PER", f"{info.get('forwardPE', 'N/A')}")
-                c4.metric("配当利回り", f"{(info.get('dividendYield', 0) * 100):.2f}%" if info.get('dividendYield') else "0.00%")
+                c3.metric("実績PER(TTM)", f"{info.get('trailingPE', 'N/A')}")
+                c4.metric("予想PER(Fwd)", f"{info.get('forwardPE', 'N/A')}")
+                
+                trailing_eps = info.get('trailingEps', None)
+                c5.metric("EPS (TTM)", f"${trailing_eps:,.2f}" if trailing_eps is not None else "N/A")
                 
                 st.markdown("---")
                 
@@ -257,21 +260,21 @@ else:
                 
                 st.markdown("---")
                 
-                # 四半期ごとの業績データ（2〜3年分）
-                st.markdown("#### 📊 四半期ごとの業績推移（直近2〜3年）")
-                q_fin = stock_obj.quarterly_financials
+                # 四半期ごとの損益計算書データ（EPSを含む）
+                st.markdown("#### 📊 四半期ごとの業績 ＆ EPS推移（直近5期分）")
+                q_fin = stock_obj.get_income_stmt(freq="quarterly")
                 if q_fin is not None and not q_fin.empty:
-                    st.dataframe(q_fin.style.format("{:,.0f}"), use_container_width=True)
+                    st.dataframe(q_fin.style.format("{:,.2f}"), use_container_width=True)
                 else:
                     st.info("四半期業績データが見つかりませんでした。")
                 
                 st.markdown("---")
                 
-                # 年別の業績データ（5年分）
-                st.markdown("#### 📅 年別の業績推移（過去5年分）")
-                y_fin = stock_obj.financials
+                # 年別の損益計算書データ（EPSを含む）
+                st.markdown("#### 📅 年別の業績 ＆ EPS推移（過去5年分）")
+                y_fin = stock_obj.get_income_stmt(freq="yearly")
                 if y_fin is not None and not y_fin.empty:
-                    st.dataframe(y_fin.style.format("{:,.0f}"), use_container_width=True)
+                    st.dataframe(y_fin.style.format("{:,.2f}"), use_container_width=True)
                 else:
                     st.info("年別業績データが見つかりませんでした。")
                     
