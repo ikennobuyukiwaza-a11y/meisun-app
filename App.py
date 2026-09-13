@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 1. ページ構成とアイコンの設定
 st.set_page_config(
@@ -10,8 +11,8 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🏛️ 名選：S&P 500 全銘柄 統合スクリーニング＆分析")
-st.markdown("S&P 500全銘柄を高速一括取得し、各種ランキング・スクリーニング・チャートを快適に操作できます。")
+st.title("🏛️ 名選：S&P 500 銘柄 統合スクリーニング＆分析")
+st.markdown("マルチスレッド高速処理により、フリーズせずに全銘柄のデータを安定して取得・解析します。")
 
 # S&P 500の全ティッカーをWikipediaから自動取得する関数
 @st.cache_data(ttl=86400)
@@ -32,7 +33,7 @@ ALL_SP500_TICKERS = get_sp500_tickers()
 st.sidebar.header("🎯 検索対象の切替")
 fetch_mode = st.sidebar.radio(
     "モード選択",
-    ["S&P 500 全銘柄（約500社）", "軽量モード（主要30銘柄のみ）"],
+    ["S&P 500 全銘柄（約500社）", "軽量モード（主要30銘柄のみ高速テスト）"],
     index=0
 )
 
@@ -45,82 +46,72 @@ else:
                       "NFLX", "AMD", "INTC", "QCOM", "IBM", "ORCL", "CRM", "ADBE", "NKE", "MCD"]
     st.sidebar.warning("軽量モード（主要30銘柄）で実行中。")
 
-@st.cache_data(ttl=86400)
-def fetch_stock_data(tickers_tuple):
-    end_date = datetime.today()
-    date_1y = end_date - timedelta(days=365)
-    
-    # yfinanceのマルチダウンロードで一括取得（フリーズ防止・高速化）
-    data_load_state = st.text("株価データを一括ダウンロード中...")
+# 1銘柄分のデータを安全に取得する関数
+def fetch_single_stock(ticker):
     try:
-        df_hist = yf.download(list(tickers_tuple), start=date_1y, end=end_date, group_by='ticker', threads=True, progress=False)
-    except Exception:
-        df_hist = pd.DataFrame()
-    data_load_state.empty()
-    
-    data = []
-    for ticker in tickers_tuple:
-        try:
-            # 個別データの切り出し
-            if len(tickers_tuple) == 1:
-                hist = df_hist
-            else:
-                if ticker in df_hist.columns.levels[0]:
-                    hist = df_hist[ticker].dropna(how="all")
-                else:
-                    continue
+        end_date = datetime.today()
+        date_1y = end_date - timedelta(days=365)
+        
+        stock = yf.Ticker(ticker)
+        hist = stock.history(start=date_1y)
+        if hist.empty or len(hist) < 5:
+            return None
             
-            if hist.empty or len(hist) < 5:
-                continue
-                
-            current_price = hist['Close'].iloc[-1]
-            high_1y = hist['High'].max()
-            low_1y = hist['Low'].min()
-            
-            # 暴落率・暴騰率
-            drop_from_high = ((current_price - high_1y) / high_1y) * 100 if high_1y > 0 else 0.0
-            surge_from_low = ((current_price - low_1y) / low_1y) * 100 if low_1y > 0 else 0.0
-            
-            # 1ヶ月騰落率
-            date_1m = end_date - timedelta(days=30)
-            sub_hist_1m = hist.loc[hist.index >= pd.Timestamp(date_1m, tz=hist.index.tz) if hist.index.tz else pd.Timestamp(date_1m)]
-            return_1m = ((current_price - sub_hist_1m['Close'].iloc[0]) / sub_hist_1m['Close'].iloc[0]) * 100 if not sub_hist_1m.empty else 0.0
+        current_price = hist['Close'].iloc[-1]
+        high_1y = hist['High'].max()
+        low_1y = hist['Low'].min()
+        
+        # 暴落率・暴騰率
+        drop_from_high = ((current_price - high_1y) / high_1y) * 100 if high_1y > 0 else 0.0
+        surge_from_low = ((current_price - low_1y) / low_1y) * 100 if low_1y > 0 else 0.0
+        
+        # 1ヶ月騰落率
+        date_1m = end_date - timedelta(days=30)
+        sub_hist_1m = hist.loc[hist.index >= pd.Timestamp(date_1m, tz=hist.index.tz) if hist.index.tz else pd.Timestamp(date_1m)]
+        return_1m = ((current_price - sub_hist_1m['Close'].iloc[0]) / sub_hist_1m['Close'].iloc[0]) * 100 if not sub_hist_1m.empty else 0.0
 
-            # 簡易ファンダメンタルズ（info取得時のタイムアウトを防ぐため安全に取得）
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            
-            total_revenue = info.get("totalRevenue", 0)
-            net_income = info.get("netIncomeToCommon", 0)
-            profit_margin = (net_income / total_revenue) * 100 if total_revenue and total_revenue > 0 else None
-            
-            data.append({
-                "Ticker": ticker,
-                "社名": info.get("shortName", ticker),
-                "現在株価 ($)": current_price,
-                "過去1年最高値 ($)": high_1y,
-                "過去1年最安値 ($)": low_1y,
-                "暴落率(最高値比) (%)": drop_from_high,
-                "暴騰率(最安値比) (%)": surge_from_low,
-                "時価総額 ($)": info.get("marketCap", 0),
-                "売上高 ($)": total_revenue,
-                "純利益 ($)": net_income,
-                "売上上昇率 (%)": info.get("revenueGrowth", 0) * 100 if info.get("revenueGrowth") else None,
-                "利益率 (%)": profit_margin,
-                "PER": info.get("trailingPE", None),
-                "予想PER": info.get("forwardPE", None),
-                "PBR": info.get("priceToBook", None),
-                "ROE (%)": info.get("returnOnEquity", 0) * 100 if info.get("returnOnEquity") else None,
-                "配当利回り (%)": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0,
-                "1ヶ月騰落率 (%)": return_1m
-            })
-        except Exception:
-            continue
-            
+        info = stock.info
+        total_revenue = info.get("totalRevenue", 0)
+        net_income = info.get("netIncomeToCommon", 0)
+        profit_margin = (net_income / total_revenue) * 100 if total_revenue and total_revenue > 0 else None
+
+        return {
+            "Ticker": ticker,
+            "社名": info.get("shortName", ticker),
+            "現在株価 ($)": current_price,
+            "過去1年最高値 ($)": high_1y,
+            "過去1年最安値 ($)": low_1y,
+            "暴落率(最高値比) (%)": drop_from_high,
+            "暴騰率(最安値比) (%)": surge_from_low,
+            "時価総額 ($)": info.get("marketCap", 0),
+            "売上高 ($)": total_revenue,
+            "純利益 ($)": net_income,
+            "売上上昇率 (%)": info.get("revenueGrowth", 0) * 100 if info.get("revenueGrowth") else None,
+            "利益率 (%)": profit_margin,
+            "PER": info.get("trailingPE", None),
+            "予想PER": info.get("forwardPE", None),
+            "PBR": info.get("priceToBook", None),
+            "ROE (%)": info.get("returnOnEquity", 0) * 100 if info.get("returnOnEquity") else None,
+            "配当利回り (%)": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0,
+            "1ヶ月騰落率 (%)": return_1m
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=86400)
+def fetch_stock_data_parallel(tickers_tuple):
+    data = []
+    # マルチスレッドで高速かつ安全に並列取得（フリーズを防止）
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(fetch_single_stock, ticker): ticker for ticker in tickers_tuple}
+        for future in as_completed(futures):
+            res = future.result()
+            if res is not None:
+                data.append(res)
     return pd.DataFrame(data)
 
-with st.spinner(f"対象銘柄（{len(target_tickers)}社）のデータを解析中..."):
-    df = fetch_stock_data(tuple(target_tickers))
+with st.spinner(f"対象銘柄（{len(target_tickers)}社）のデータを高速並列解析中...少々お待ちください"):
+    df = fetch_stock_data_parallel(tuple(target_tickers))
 
 if df.empty:
     st.error("データを取得できませんでした。「軽量モード」に切り替えてお試しください。")
