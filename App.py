@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("🏛️ 名選：S&P 500 銘柄 統合スクリーニング＆分析")
-st.markdown("マルチスレッド高速処理により、フリーズせずに全銘柄のデータを安定して取得・解析します。")
+st.markdown("S&P 500全銘柄対応・マルチスレッド高速処理による安定稼働版です。")
 
 # S&P 500の全ティッカーをWikipediaから自動取得する関数
 @st.cache_data(ttl=86400)
@@ -34,7 +34,8 @@ st.sidebar.header("🎯 検索対象の切替")
 fetch_mode = st.sidebar.radio(
     "モード選択",
     ["S&P 500 全銘柄（約500社）", "軽量モード（主要30銘柄のみ高速テスト）"],
-    index=0
+    index=0,
+    key="fetch_mode_radio"
 )
 
 if "全銘柄" in fetch_mode:
@@ -61,11 +62,9 @@ def fetch_single_stock(ticker):
         high_1y = hist['High'].max()
         low_1y = hist['Low'].min()
         
-        # 暴落率・暴騰率
         drop_from_high = ((current_price - high_1y) / high_1y) * 100 if high_1y > 0 else 0.0
         surge_from_low = ((current_price - low_1y) / low_1y) * 100 if low_1y > 0 else 0.0
         
-        # 1ヶ月騰落率
         date_1m = end_date - timedelta(days=30)
         sub_hist_1m = hist.loc[hist.index >= pd.Timestamp(date_1m, tz=hist.index.tz) if hist.index.tz else pd.Timestamp(date_1m)]
         return_1m = ((current_price - sub_hist_1m['Close'].iloc[0]) / sub_hist_1m['Close'].iloc[0]) * 100 if not sub_hist_1m.empty else 0.0
@@ -101,7 +100,6 @@ def fetch_single_stock(ticker):
 @st.cache_data(ttl=86400)
 def fetch_stock_data_parallel(tickers_tuple):
     data = []
-    # マルチスレッドで高速かつ安全に並列取得（フリーズを防止）
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(fetch_single_stock, ticker): ticker for ticker in tickers_tuple}
         for future in as_completed(futures):
@@ -110,7 +108,7 @@ def fetch_stock_data_parallel(tickers_tuple):
                 data.append(res)
     return pd.DataFrame(data)
 
-with st.spinner(f"対象銘柄（{len(target_tickers)}社）のデータを高速並列解析中...少々お待ちください"):
+with st.spinner(f"対象銘柄（{len(target_tickers)}社）のデータを高速並列解析中..."):
     df = fetch_stock_data_parallel(tuple(target_tickers))
 
 if df.empty:
@@ -210,18 +208,61 @@ else:
             st.info("条件に一致する銘柄が見つかりませんでした。")
 
     with tab3:
-        st.subheader("🔎 銘柄個別チェッカー")
-        search_ticker = st.selectbox("判定する銘柄を選択", all_tickers_list, key="chk_ticker_main")
+        st.subheader("🔎 銘柄個別チェッカー（スクリーニング合否判定）")
+        st.markdown("任意の銘柄を選択して、Tab2で設定したスクリーニング条件に合致しているかを詳細に判定します。")
+        
+        search_ticker = st.selectbox("判定する銘柄を選択・検索", all_tickers_list, key="chk_ticker_main")
+        st.markdown("---")
         
         matched_rows = df[df["Ticker"] == search_ticker]
-        if not matched_rows.empty:
+        if matched_rows.empty:
+            st.warning("選択された銘柄のデータが見つかりませんでした。")
+        else:
             row = matched_rows.iloc[0]
-            st.write(f"**社名**: {row['社名']} ({search_ticker})")
-            st.write(f"**現在株価**: ${row['現在株価 ($)']:,.2f}")
-            st.write(f"**暴落率(最高値比)**: {row['暴落率(最高値比) (%)']:+.2f}%")
-            st.write(f"**暴騰率(最安値比)**: {row['暴騰率(最安値比) (%)']:+.2f}%")
-            st.write(f"**予想PER**: {row['予想PER']}")
-            st.write(f"**ROE**: {row['ROE (%)']}%")
+            st.markdown(f"##### 📌 選択銘柄: **{row['社名']} ({search_ticker})**")
+            st.write(f"現在の株価: **${row['現在株価 ($)']:,.2f}** | 時価総額: **${row['時価総額 ($)']:,.0f}**")
+            
+            st.markdown("##### 📝 現在有効なスクリーニング条件との照合結果:")
+            
+            checks = []
+            if use_rev:
+                checks.append(("売上上昇率", row["売上上昇率 (%)"], min_rev_growth, lambda v, th: v is not None and v >= th, f"{min_rev_growth}%以上", "%"))
+            if use_margin:
+                checks.append(("利益率", row["利益率 (%)"], min_profit_margin, lambda v, th: v is not None and v >= th, f"{min_profit_margin}%以上", "%"))
+            if use_pe:
+                checks.append(("予想PER", row["予想PER"], max_forward_pe, lambda v, th: v is not None and v <= th, f"{max_forward_pe}倍以下", "倍"))
+            if use_pbr:
+                checks.append(("PBR", row["PBR"], max_pbr, lambda v, th: v is not None and v <= th, f"{max_pbr}倍以下", "倍"))
+            if use_roe:
+                checks.append(("ROE", row["ROE (%)"], min_roe, lambda v, th: v is not None and v >= th, f"{min_roe}%以上", "%"))
+            if use_drop:
+                checks.append(("暴落率(最高値比)", row["暴落率(最高値比) (%)"], max_drop, lambda v, th: v is not None and v <= th, f"{max_drop}%以下", "%"))
+            if use_surge:
+                checks.append(("暴騰率(最安値比)", row["暴騰率(最安値比) (%)"], min_surge, lambda v, th: v is not None and v >= th, f"{min_surge}%以上", "%"))
+
+            if not checks:
+                st.info("現在、Tab2ですべてのスクリーニング条件のチェックボックスがOFFになっています。")
+            else:
+                all_passed = True
+                for label, val, threshold, eval_func, desc, unit in checks:
+                    passed = eval_func(val, threshold)
+                    if not passed:
+                        all_passed = False
+                    
+                    val_str = f"{val:,.2f}{unit}" if pd.notnull(val) else "データなし"
+                    if unit == "%" and pd.notnull(val) and "率" in label:
+                        val_str = f"{val:+.2f}%"
+
+                    if passed:
+                        st.success(f"✅ **{label}**: 合格 (実績値: **{val_str}** / 条件: {desc})")
+                    else:
+                        st.error(f"❌ **{label}**: 不合格 (外れています ⚠️ 実績値: **{val_str}** / 条件: {desc})")
+                
+                st.markdown("---")
+                if all_passed:
+                    st.success(f"🎉 **判定結果**: **{row['社名']} ({search_ticker})** は現在有効なすべてのスクリーニング条件をクリアしています！")
+                else:
+                    st.warning(f"⚠️ **判定結果**: **{row['社名']} ({search_ticker})** は一部の条件を満たしていません。")
 
     with tab4:
         st.subheader("📈 個別銘柄のチャート ＆ 出来高分析")
@@ -230,10 +271,20 @@ else:
         chart_rows = df[df["Ticker"] == selected_ticker]
         if not chart_rows.empty:
             selected_row = chart_rows.iloc[0]
-            st.metric("暴落率(最高値比)", f"{selected_row['暴落率(最高値比) (%)']:+.2f}%")
-            st.metric("暴騰率(最安値比)", f"{selected_row['暴騰率(最安値比) (%)']:+.2f}%")
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("暴落率(最高値比)", f"{selected_row['暴落率(最高値比) (%)']:+.2f}%")
+            c2.metric("暴騰率(最安値比)", f"{selected_row['暴騰率(最安値比) (%)']:+.2f}%")
+            c3.metric("予想PER", f"{selected_row['予想PER']:.2f}倍" if pd.notnull(selected_row['予想PER']) else "N/A")
+            c4.metric("PBR", f"{selected_row['PBR']:.2f}倍" if pd.notnull(selected_row['PBR']) else "N/A")
+            
+            st.markdown("---")
+            st.markdown(f"**【{selected_row['社名']} ({selected_ticker}) の株価推移（1年間）】**")
             
             stock_history = yf.Ticker(selected_ticker).history(period="1y")
             if not stock_history.empty:
                 st.line_chart(stock_history['Close'])
+                st.markdown(f"**【同期間の出来高（Volume）推移】**")
                 st.bar_chart(stock_history['Volume'])
+            else:
+                st.info("チャートデータを取得できませんでした。")
